@@ -6,6 +6,41 @@ enum DeclKind:
   case ValueKind, EntityKind, AggregateRootKind, CommandKind, DomainEventKind, IntegrationEventKind,
     ErrorKind, DomainEntityKind, ActorKind
 
+  /** The declaration's kind as spoken in check messages and the workbench. */
+  def label: String = this match
+    case DeclKind.ValueKind            => "value"
+    case DeclKind.EntityKind           => "entity"
+    case DeclKind.AggregateRootKind    => "aggregate root"
+    case DeclKind.CommandKind          => "command"
+    case DeclKind.DomainEventKind      => "domain event"
+    case DeclKind.IntegrationEventKind => "integration event"
+    case DeclKind.ErrorKind            => "error"
+    case DeclKind.DomainEntityKind     => "domain entity"
+    case DeclKind.ActorKind            => "actor"
+
+  /** The graph-explorer style key for the declaration's node. */
+  def css: String = this match
+    case DeclKind.ValueKind            => "value"
+    case DeclKind.EntityKind           => "entity"
+    case DeclKind.AggregateRootKind    => "agg"
+    case DeclKind.CommandKind          => "cmd"
+    case DeclKind.DomainEventKind      => "evt"
+    case DeclKind.IntegrationEventKind => "ie"
+    case DeclKind.ErrorKind            => "err"
+    case DeclKind.DomainEntityKind     => "de"
+    case DeclKind.ActorKind            => "actor"
+
+object DeclKind:
+  def of(d: Declaration): DeclKind = d match
+    case _: Declaration.Value            => DeclKind.ValueKind
+    case e: Declaration.Entity           => if e.aggregateRoot then DeclKind.AggregateRootKind else DeclKind.EntityKind
+    case _: Declaration.Command          => DeclKind.CommandKind
+    case _: Declaration.DomainEvent      => DeclKind.DomainEventKind
+    case _: Declaration.IntegrationEvent => DeclKind.IntegrationEventKind
+    case _: Declaration.Error            => DeclKind.ErrorKind
+    case _: Declaration.DomainEntity     => DeclKind.DomainEntityKind
+    case _: Declaration.Actor            => DeclKind.ActorKind
+
 final case class FieldInfo(name: String, typeName: String)
 
 final case class DeclInfo(
@@ -59,6 +94,16 @@ enum Edge:
     */
   case Fails(command: String, aggregate: String, error: String, when: Option[String] = None)
 
+  /** The method name this edge translates to in generated code: `decide<Command>` for handles
+    * edges, `on<Event>` for transition edges, empty for edges with no method of their own. The one
+    * home of the naming convention — the graph explorer labels edges with it and the code generator
+    * must follow it, so neither may derive it independently.
+    */
+  def methodName: String = this match
+    case Edge.Handles(_, _, command, _, _, _) => s"decide$command"
+    case Edge.Transition(_, _, event, _, _, _) => s"on$event"
+    case _                                     => ""
+
 final case class ContextModel(name: String, declarations: List[DeclInfo], edges: List[Edge]):
   def count(kind: DeclKind): Int           = declarations.count(_.kind == kind)
   def byKind(kind: DeclKind): List[DeclInfo] = declarations.filter(_.kind == kind)
@@ -80,20 +125,19 @@ object ContextModel:
             case ValueBody.Sum(vs)     => (Nil, vs.map(_.name), None)
           DeclInfo(DeclKind.ValueKind, v.name, desc, fs, vs, underlying, at._1, at._2)
         case e: Declaration.Entity =>
-          val kind = if e.aggregateRoot then DeclKind.AggregateRootKind else DeclKind.EntityKind
-          DeclInfo(kind, e.name, desc, fieldInfos(e.fields), Nil, None, at._1, at._2)
+          DeclInfo(DeclKind.of(e), e.name, desc, fieldInfos(e.fields), Nil, None, at._1, at._2)
         case c: Declaration.Command =>
-          DeclInfo(DeclKind.CommandKind, c.name, desc, fieldInfos(c.fields), Nil, None, at._1, at._2)
+          DeclInfo(DeclKind.of(c), c.name, desc, fieldInfos(c.fields), Nil, None, at._1, at._2)
         case ev: Declaration.DomainEvent =>
-          DeclInfo(DeclKind.DomainEventKind, ev.name, desc, fieldInfos(ev.fields), Nil, None, at._1, at._2)
+          DeclInfo(DeclKind.of(ev), ev.name, desc, fieldInfos(ev.fields), Nil, None, at._1, at._2)
         case ie: Declaration.IntegrationEvent =>
-          DeclInfo(DeclKind.IntegrationEventKind, ie.name, desc, fieldInfos(ie.fields), Nil, None, at._1, at._2)
+          DeclInfo(DeclKind.of(ie), ie.name, desc, fieldInfos(ie.fields), Nil, None, at._1, at._2)
         case er: Declaration.Error =>
-          DeclInfo(DeclKind.ErrorKind, er.name, desc, fieldInfos(er.fields), Nil, None, at._1, at._2)
+          DeclInfo(DeclKind.of(er), er.name, desc, fieldInfos(er.fields), Nil, None, at._1, at._2)
         case de: Declaration.DomainEntity =>
-          DeclInfo(DeclKind.DomainEntityKind, de.name, desc, Nil, Nil, None, at._1, at._2)
+          DeclInfo(DeclKind.of(de), de.name, desc, Nil, Nil, None, at._1, at._2)
         case a: Declaration.Actor =>
-          DeclInfo(DeclKind.ActorKind, a.name, desc, Nil, Nil, None, at._1, at._2)
+          DeclInfo(DeclKind.of(a), a.name, desc, Nil, Nil, None, at._1, at._2)
 
     def edges(d: Declaration): List[Edge] =
       d match

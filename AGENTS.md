@@ -33,7 +33,7 @@ IMPORTANT: When applicable, prefer using intellij-index MCP tools for code navig
 - `sbt clean` — remove build outputs
 - `sbt ui/fastLinkJS` — dev build of the UI JavaScript (`ui/tyrianapp.js` expects this output); prefix with `~` to watch
 - `sbt ui/fullLinkJS` — optimised production JavaScript
-- `sbt ui/test` — run the ui module's munit tests (requires Node.js)
+- `sbt ui/test` — **currently broken upstream**: `sbt-scalajs_sbt2_3` 1.22.0 ships `scalajs-env-nodejs` 1.6.0 (the last `_3` publication), whose stdin/REPL launch cannot host the 1.22 test bridge's RPC — every run dies with `RunTerminatedException` before any test executes. The GraphState tests in `ui/src/test` compile and are linked into the test bundle; run them once a working `_3` env is published (or via sbt 1). Do not sink time into re-diagnosing.
 - `npm run start` (from `ui/`, after `npm install`) — Parcel dev server at http://localhost:1234 with hot reload
 - `npm run build:editor` (from `ui/`) — rebuild the committed `ui/vendor/editor.js` bundle (CodeMirror wrapper); only needed when `ui/editor.js` changes
 

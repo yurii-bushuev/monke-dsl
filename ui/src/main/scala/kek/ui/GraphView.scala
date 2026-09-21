@@ -9,46 +9,6 @@ import tyrian.syntax.*
 /** Renders the context graph: layered columns, bezier links, click-to-focus, drag-pan and zoom. */
 object GraphView:
 
-  private val kindCssOfDeclKind: Map[DeclKind, String] = Map(
-    DeclKind.ValueKind            -> "value",
-    DeclKind.EntityKind           -> "entity",
-    DeclKind.AggregateRootKind    -> "agg",
-    DeclKind.CommandKind          -> "cmd",
-    DeclKind.DomainEventKind      -> "evt",
-    DeclKind.IntegrationEventKind -> "ie",
-    DeclKind.ErrorKind            -> "err",
-    DeclKind.DomainEntityKind     -> "de",
-    DeclKind.ActorKind            -> "actor"
-  )
-
-  private val kindLabelOfDeclKind: Map[DeclKind, String] = Map(
-    DeclKind.ValueKind            -> "value",
-    DeclKind.EntityKind           -> "entity",
-    DeclKind.AggregateRootKind    -> "aggregate root",
-    DeclKind.CommandKind          -> "command",
-    DeclKind.DomainEventKind      -> "domain event",
-    DeclKind.IntegrationEventKind -> "integration event",
-    DeclKind.ErrorKind            -> "error",
-    DeclKind.DomainEntityKind     -> "domain entity",
-    DeclKind.ActorKind            -> "actor"
-  )
-
-  private val edgeColors = Map(
-    "sends"     -> "#9ece6a",
-    "handles"   -> "#7aa2f7",
-    "emits"     -> "#e0af68",
-    "triggered" -> "#bb9af7",
-    "fails"     -> "#f7768e"
-  )
-
-  private val edgeLegend: Map[String, String] = Map(
-    "sends"     -> "The actor initiates this command.",
-    "handles"   -> "The behavior decides the command and produces the domain event; branched decides list their cases.",
-    "emits"     -> "The transition applies the event to the aggregate state and emits the integration event.",
-    "triggered" -> "When this integration event arrives (e.g. via outbox), it issues the command.",
-    "fails"     -> "The decision can fail with this domain error."
-  )
-
   def pane(m: ContextModel, g: GraphState): Html[Msg] =
     val layout = GraphLayout(m)
 
@@ -62,10 +22,10 @@ object GraphView:
     val visibleColumnX = visibleNodes.map(_.x).toSet
     val visibleColumns = layout.columns.filter(c => visibleColumnX.contains(c.x))
 
-    val near     = g.focus.fold(Set.empty[String])(adjacency(visibleLinks, _))
-    val pathSel  = g.path.map(s => (s, reachableFrom(visibleLinks, s)))
+    val near     = g.focus.fold(Set.empty[String])(GraphState.adjacency(visibleLinks, _))
+    val pathSel  = g.path.map(s => (s, GraphState.reachableFrom(visibleLinks, s)))
     val children =
-      edgeColors.map { (kind, color) => arrowMarker(kind, color) }.toList :::
+      EdgeKind.values.map(arrowMarker).toList :::
         background(layout) ::
         visibleColumns.map(columnHeader) :::
         visibleLinks.map(link(_, g.focus, g.edgeFocus, pathSel)) :::
@@ -90,18 +50,6 @@ object GraphView:
       selectionPanel(m, visibleLinks, g)
     )
 
-  /** Double-click follows the directed flow: every node reachable from `start` stays lit. */
-  private def reachableFrom(links: List[GraphLink], start: String): Set[String] =
-    val out: Map[String, List[GraphLink]] =
-      links.groupBy(_.fromId).view.mapValues(_.toList).toMap
-    var seen     = Set(start)
-    var frontier = List(start)
-    while frontier.nonEmpty do
-      val next = frontier.flatMap(id => out.getOrElse(id, Nil).map(_.toId)).distinct
-      frontier = next.filterNot(seen.contains)
-      seen = seen ++ frontier
-    seen
-
   private def selectionPanel(m: ContextModel, links: List[GraphLink], g: GraphState): Html[Msg] =
     g.focus.flatMap(details(m, links, _))
       .orElse(g.edgeFocus.flatMap(id => links.find(_.id == id)).map(edgeDetails))
@@ -118,7 +66,7 @@ object GraphView:
           div(cls := "desc")(span("method "), code(l.name))
         ).orEmpty ::
         l.cases.map(c => div(cls := "desc")(span("case "), code(s""""$c""""))) :::
-        List(div(cls := "desc")(edgeLegend.getOrElse(l.kind.css, ""))) *
+        List(div(cls := "desc")(l.kind.legend)) *
     )
 
   private def filterBar(m: ContextModel, g: GraphState): Html[Msg] =
@@ -163,16 +111,16 @@ object GraphView:
       }.orEmpty
     )
 
-  private def arrowMarker(kind: String, color: String): Html[Msg] =
+  private def arrowMarker(kind: EdgeKind): Html[Msg] =
     SVG.marker(
-      attr("id") := s"arrow-$kind",
+      attr("id") := kind.markerId,
       attr("markerWidth") := 8,
       attr("markerHeight") := 8,
       attr("refX") := 7,
       attr("refY") := 4,
       attr("orient") := "auto"
     )(
-      SVG.path(SVG.d := "M0,0 L8,4 L0,8 Z", SVG.fill := color)
+      SVG.path(SVG.d := "M0,0 L8,4 L0,8 Z", SVG.fill := kind.color)
     )
 
   private def num(d: Double): String = d.toString
@@ -195,9 +143,6 @@ object GraphView:
       attr("font-size") := "12",
       cls := "column-title"
     )(c.title)
-
-  private def adjacency(links: List[GraphLink], id: String): Set[String] =
-    links.flatMap(l => if l.fromId == id || l.toId == id then List(l.fromId, l.toId) else Nil).toSet
 
   private def link(
       l: GraphLink,
@@ -322,9 +267,7 @@ object GraphView:
       val incoming = links.filter(_.toId == id)
       div(cls := "graph-details")(
         div(cls := "details-head")(
-          span(cls := s"kind-badge ${kindCssOfDeclKind.getOrElse(d.kind, "")}")(
-            kindLabelOfDeclKind.getOrElse(d.kind, d.kind.toString)
-          ),
+          span(cls := s"kind-badge ${d.kind.css}")(d.kind.label),
           code(d.name),
           button(onClick(Msg.GraphFocus(None)), cls := "btn small")("✕")
         ),

@@ -25,11 +25,25 @@ enum EdgeKind:
 
   def markerId: String = s"arrow-$css"
 
+  def color: String = this match
+    case EdgeKind.Sends       => "#9ece6a"
+    case EdgeKind.Handles     => "#7aa2f7"
+    case EdgeKind.Emits       => "#e0af68"
+    case EdgeKind.TriggeredBy => "#bb9af7"
+    case EdgeKind.Fails       => "#f7768e"
+
+  def legend: String = this match
+    case EdgeKind.Sends       => "The actor initiates this command."
+    case EdgeKind.Handles     => "The behavior decides the command and produces the domain event; branched decides list their cases."
+    case EdgeKind.Emits       => "The transition applies the event to the aggregate state and emits the integration event."
+    case EdgeKind.TriggeredBy => "When this integration event arrives (e.g. via outbox), it issues the command."
+    case EdgeKind.Fails       => "The decision can fail with this domain error."
+
 final case class GraphNode(id: String, kind: GraphKind, label: String, x: Double, y: Double)
 
 /** `aggs` — the aggregate roots this link belongs to; drives the per-aggregate quick filter.
-  * `name` — the method name this edge translates to in code: `decide<Command>` for handles edges,
-  * `on<Event>` for transition edges (same convention future codegen must use).
+  * `name` — the method name this edge translates to in code, taken from Edge.methodName — the one
+  * home of the decide<Command>/on<Event> convention, shared with the future code generator.
   * `cases` — the §13 `match` conditions that produce this link's outcome; empty unless the decide
   * is branched (arms sharing an outcome share one curve and accumulate their conditions).
   */
@@ -65,6 +79,20 @@ object GraphLayout:
   private val GapY      = 40.0
   private val Pad       = 48.0
   private val HeaderH   = 30.0
+
+  /** A prospective link straight from a model edge — before geometry and before §13 arms sharing
+    * an outcome are merged onto one curve. `name` is the edge's codegen method name
+    * (Edge.methodName), never derived here.
+    */
+  private final case class RawLink(
+      fromId: String,
+      toId: String,
+      kind: EdgeKind,
+      label: String,
+      name: String,
+      cases: List[String],
+      aggs: Set[String]
+  )
 
   def apply(m: ContextModel): GraphLayout =
     def entries(kind: DeclKind, graphKind: GraphKind): List[(String, GraphKind)] =
@@ -116,39 +144,37 @@ object GraphLayout:
       }.groupMap(_._1)(_._2)
         .view.mapValues(_.toSet).toMap
 
-    val rawLinks: List[(String, String, EdgeKind, String, List[String], Set[String])] =
-      m.edges.collect { case Edge.Sends(actor, cmd) =>
-        (actor, cmd, EdgeKind.Sends, "", Nil, handlerAggs.getOrElse(cmd, Set.empty))
-      } ++
-        m.edges.collect { case Edge.Handles(_, agg, cmd, _, ev, when) =>
-          (cmd, ev, EdgeKind.Handles, s"decide$cmd", when.toList, Set(agg))
-        } ++
-        m.edges.collect { case Edge.Fails(cmd, agg, err, when) =>
-          (cmd, err, EdgeKind.Fails, "", when.toList, Set(agg))
-        } ++
-        m.edges.collect { case Edge.Triggers(ie, cmd) =>
-          (ie, cmd, EdgeKind.TriggeredBy, "triggered", Nil,
-            emitterAggs.getOrElse(ie, Set.empty) ++ handlerAggs.getOrElse(cmd, Set.empty))
-        } ++
-        m.edges.flatMap {
-          case Edge.Transition(_, agg, ev, from, to, emits) =>
-            emits.map(ie => (ev, ie, EdgeKind.Emits, s"$from → $to", Nil, Set(agg)))
-          case _ => Nil
-        }
+    val rawLinks: List[RawLink] = m.edges.flatMap {
+      case Edge.Sends(actor, cmd) =>
+        List(RawLink(actor, cmd, EdgeKind.Sends, "", "", Nil, handlerAggs.getOrElse(cmd, Set.empty)))
+      case h: Edge.Handles =>
+        List(RawLink(h.command, h.event, EdgeKind.Handles, h.methodName, h.methodName,
+          h.when.toList, Set(h.aggregate)))
+      case f: Edge.Fails =>
+        List(RawLink(f.command, f.error, EdgeKind.Fails, "", "", f.when.toList, Set(f.aggregate)))
+      case Edge.Triggers(ie, cmd) =>
+        List(RawLink(ie, cmd, EdgeKind.TriggeredBy, "triggered", "", Nil,
+          emitterAggs.getOrElse(ie, Set.empty) ++ handlerAggs.getOrElse(cmd, Set.empty)))
+      case t: Edge.Transition =>
+        t.emits.map(ie => RawLink(t.event, ie, EdgeKind.Emits, s"${t.from} → ${t.to}",
+          t.methodName, Nil, Set(t.aggregate)))
+      case _: Edge.OperatesOn | _: Edge.Composes | _: Edge.FieldType => Nil
+    }
 
     // Branched decides (§13 match): arms sharing an outcome share one curve — their conditions
     // accumulate on the link so every case stays visible without duplicating the edge.
     val links = rawLinks
-      .groupMap { case (f, t, k, l, _, _) => (f, t, k, l) } { case (_, _, _, _, cases, aggs) =>
-        (cases, aggs)
+      .groupMap(l => (l.fromId, l.toId, l.kind))(identity)
+      .values
+      .map { rs =>
+        val head = rs.head
+        head.copy(cases = rs.flatMap(_.cases).distinct, aggs = rs.flatMap(_.aggs).toSet)
       }
       .toList
-      .flatMap { case ((fromId, toId, kind, label), parts) =>
-        val cases = parts.flatMap { (cs, _) => cs }.distinct
-        val aggs  = parts.flatMap { (_, as) => as }.toSet
+      .flatMap { r =>
         for
-          (fx, fy) <- pos.get(fromId)
-          (tx, ty) <- pos.get(toId)
+          (fx, fy) <- pos.get(r.fromId)
+          (tx, ty) <- pos.get(r.toId)
         yield
           val sx      = fx + NodeW
           val sy      = fy + NodeH / 2
@@ -167,24 +193,18 @@ object GraphLayout:
             else
               val mx = (sx + txStart) / 2
               (s"M $sx $sy C $mx $sy, $mx $tyStart, $txStart $tyStart", mx, (sy + tyStart) / 2 - 6)
-          // Method names: the decide edge is named after the command, the transition edge after the
-          // event it applies — the naming convention code generation must follow.
-          val name = kind match
-            case EdgeKind.Handles => s"decide$fromId"
-            case EdgeKind.Emits   => s"on$fromId"
-            case _                => ""
           GraphLink(
-            id = s"$fromId>$toId:${kind.css}",
+            id = s"${r.fromId}>${r.toId}:${r.kind.css}",
             d = d,
-            fromId = fromId,
-            toId = toId,
-            kind = kind,
-            label = label,
+            fromId = r.fromId,
+            toId = r.toId,
+            kind = r.kind,
+            label = r.label,
             labelX = lx,
             labelY = ly,
-            name = name,
-            aggs = aggs,
-            cases = cases
+            name = r.name,
+            aggs = r.aggs,
+            cases = r.cases
           )
       }
 

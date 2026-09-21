@@ -53,15 +53,7 @@ object Checks:
     private def error(msg: String, span: Span): Unit =
       diags += Diagnostic.error(msg, span)
 
-    private def kindOf(d: Declaration): String = d match
-      case _: Declaration.Value            => "value"
-      case _: Declaration.Entity           => "entity"
-      case _: Declaration.Command          => "command"
-      case _: Declaration.DomainEvent      => "domain event"
-      case _: Declaration.IntegrationEvent => "integration event"
-      case _: Declaration.Error            => "error"
-      case _: Declaration.DomainEntity     => "domain entity"
-      case _: Declaration.Actor            => "actor"
+    private def kindOf(d: Declaration): String = DeclKind.of(d).label
 
     private def checkUnique(entries: List[(String, Span)], what: String): Unit =
       val seen = mutable.LinkedHashMap[String, Span]()

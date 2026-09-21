@@ -10,19 +10,6 @@ import scala.scalajs.js.annotation.*
 enum Page:
   case Editor, Graph
 
-final case class Drag(startX: Double, startY: Double, panX0: Double, panY0: Double)
-
-final case class GraphState(
-    focus: Option[String] = None,
-    edgeFocus: Option[String] = None,
-    path: Option[String] = None,
-    zoom: Double = 1.0,
-    panX: Double = 0.0,
-    panY: Double = 0.0,
-    drag: Option[Drag] = None,
-    filter: Option[String] = None
-)
-
 final case class Model(source: String, result: Compiler.Result, page: Page = Page.Editor,
     graph: GraphState = GraphState())
 
@@ -84,55 +71,27 @@ object TyrianApp extends TyrianIOApp[Msg, Model]:
         case Page.Graph =>
           Cmd.Run(IO { GraphBridge.attach(); Msg.NoOp })
       (model.copy(page = page), cmd)
+    // Graph pane events are one-line adapters: every invariant lives in GraphState's transitions.
     case Msg.GraphFocus(node) =>
-      // Clearing the focus (background click, ✕ buttons) drops the whole selection; picking a node
-      // replaces an edge/path selection.
-      val g2 = node match
-        case Some(n) => model.graph.copy(focus = Some(n), edgeFocus = None, path = None)
-        case None    => model.graph.copy(focus = None, edgeFocus = None, path = None)
-      (model.copy(graph = g2), Cmd.None)
+      (model.copy(graph = model.graph.selectNode(node)), Cmd.None)
     case Msg.GraphEdgeFocus(edge) =>
-      val g2 = edge match
-        case Some(e) => model.graph.copy(edgeFocus = Some(e), focus = None, path = None)
-        case None    => model.graph.copy(edgeFocus = None)
-      (model.copy(graph = g2), Cmd.None)
+      (model.copy(graph = model.graph.selectEdge(edge)), Cmd.None)
     case Msg.GraphPath(start) =>
-      val g2 = start match
-        case Some(s) => model.graph.copy(path = Some(s), focus = None, edgeFocus = None)
-        case None    => model.graph.copy(path = None)
-      (model.copy(graph = g2), Cmd.None)
+      (model.copy(graph = model.graph.followPath(start)), Cmd.None)
     case Msg.GraphFilter(aggregate) =>
-      (model.copy(graph = model.graph.copy(filter = aggregate)), Cmd.None)
+      (model.copy(graph = model.graph.filterBy(aggregate)), Cmd.None)
     case Msg.GraphZoom(delta) =>
-      val zoom = math.min(2.5, math.max(0.3, model.graph.zoom + delta))
-      (model.copy(graph = model.graph.copy(zoom = zoom)), Cmd.None)
+      (model.copy(graph = model.graph.zoomBy(delta)), Cmd.None)
     case Msg.GraphZoomAt(delta, x, y) =>
-      val g  = model.graph
-      val d  = math.max(-0.3, math.min(0.3, delta))
-      val z1 = math.min(2.5, math.max(0.3, g.zoom + d))
-      if z1 == g.zoom then (model, Cmd.None)
-      else
-        // Keep the point under the cursor fixed: canvas point (x, y) maps to content
-        // (x - pan) / zoom, and pan shifts so the same content point stays under (x, y).
-        val cx = (x - g.panX) / g.zoom
-        val cy = (y - g.panY) / g.zoom
-        (model.copy(graph = g.copy(zoom = z1, panX = x - cx * z1, panY = y - cy * z1)), Cmd.None)
+      (model.copy(graph = model.graph.zoomAt(delta, x, y)), Cmd.None)
     case Msg.GraphResetView =>
-      (model.copy(graph = model.graph.copy(zoom = 1.0, panX = 0.0, panY = 0.0, drag = None)), Cmd.None)
+      (model.copy(graph = model.graph.resetView), Cmd.None)
     case Msg.GraphDragStart(x, y) =>
-      (model.copy(graph = model.graph.copy(
-        drag = Some(Drag(x, y, model.graph.panX, model.graph.panY))
-      )), Cmd.None)
+      (model.copy(graph = model.graph.dragStart(x, y)), Cmd.None)
     case Msg.GraphDragMove(x, y) =>
-      model.graph.drag match
-        case Some(d) =>
-          (model.copy(graph = model.graph.copy(
-            panX = d.panX0 + (x - d.startX),
-            panY = d.panY0 + (y - d.startY)
-          )), Cmd.None)
-        case None => (model, Cmd.None)
+      (model.copy(graph = model.graph.dragMove(x, y)), Cmd.None)
     case Msg.GraphDragEnd =>
-      (model.copy(graph = model.graph.copy(drag = None)), Cmd.None)
+      (model.copy(graph = model.graph.dragEnd), Cmd.None)
     case Msg.Goto(word) =>
       model.result.model.flatMap(_.declarations.find(_.name == word)) match
         case Some(d) if d.line > 0 => (model, Cmd.Run(IO { EditorBridge.goto(d.line, d.col); Msg.NoOp }))
