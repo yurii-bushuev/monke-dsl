@@ -3,12 +3,25 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 
+*.launch
+*.sublime-workspace
+.bsp
+.c9/
+.classpath
+.metals/
+**/metals.sbt
+.project
+.settings/
+.vscode
+.gitlab-ci-local
+.idea_modules
+.env
+.nessy
+.codegraph
+
 ### IntelliJ IDEA ###
-.idea/modules.xml
-.idea/jarRepositories.xml
-.idea/compiler.xml
-.idea/libraries/
-.idea/
+.idea
+/.idea
 *.iws
 *.iml
 *.ipr
