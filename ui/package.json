@@ -1,0 +1,16 @@
+{
+  "scripts": {
+    "start": "parcel index.html --no-cache --dist-dir dist --log-level info",
+    "build": "parcel build index.html --dist-dir dist --log-level info",
+    "build:editor": "parcel build editor.js --dist-dir vendor --no-content-hash"
+  },
+  "dependencies": {
+    "@codemirror/language": "^6.0.0",
+    "@codemirror/theme-one-dark": "^6.1.2",
+    "codemirror": "^6.0.1"
+  },
+  "devDependencies": {
+    "parcel": "^2.1.0",
+    "process": "^0.11.10"
+  }
+}
